@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-monitoring-demo
+  namespace: demos
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: webapp-monitoring-demo
+  template:
+    metadata:
+      labels:
+        app: webapp-monitoring-demo
+    spec:
+      nodeSelector:
+        "beta.kubernetes.io/os": linux
+      containers:
+      - image: jannemattila/webapp-monitoring:1.0.1
+        imagePullPolicy: Always
+        name: webapp-monitoring-demo
+        resources:
+          requests:
+            cpu: 100m
+            memory: 100Mi
+          limits:
+            cpu: 150m
+            memory: 150Mi
+        ports:
+        - containerPort: 80
+          name: http
+          protocol: TCP
