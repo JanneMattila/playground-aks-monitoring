@@ -1,5 +1,9 @@
 name: CICD
 
+env:
+  repository: jannemattila/webapp-monitoring
+  image: 1.0.${{ github.run_number }}
+
 on:
   push:
     branches: [ main ]
@@ -18,7 +22,7 @@ jobs:
     steps:
       - name: Check out the repo
         uses: actions/checkout@v2
-      
+        
       - name: Set up Docker Buildx
         id: buildx
         uses: docker/setup-buildx-action@v1
@@ -37,8 +41,8 @@ jobs:
           file: 'src/WebApp/Dockerfile'
           push: true
           tags: |
-            latest
-            1.0.${{ github.run_number }}
+            ${{ env.repository }}:latest
+            ${{ env.repository }}:${{ env.image }}
             
       - name: Digest
         run: echo ${{ steps.docker_hub_build.outputs.digest }}
