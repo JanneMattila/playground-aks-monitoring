@@ -3,6 +3,8 @@ name: CICD
 env:
   repository: jannemattila/webapp-monitoring
   image: 1.0.${{ github.run_number }}
+  context: .
+  dockerfile: src/WebApp/Dockerfile
 
 on:
   push:
@@ -17,7 +19,7 @@ on:
       - '.github/workflows/**'
 
 jobs:
-  build:
+  CICD:
     runs-on: ubuntu-latest
     steps:
       - name: Check out the repo
@@ -37,9 +39,9 @@ jobs:
         id: docker_hub_build
         uses: docker/build-push-action@v2
         with:
-          context: .
-          file: 'src/WebApp/Dockerfile'
-          push: true
+          context: ${{ env.context }}
+          file: ${{ env.dockerfile }}
+          push: ${{ github.event_name = 'push' }}
           tags: |
             ${{ env.repository }}:latest
             ${{ env.repository }}:${{ env.image }}
