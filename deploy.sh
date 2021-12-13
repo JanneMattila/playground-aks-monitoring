@@ -21,6 +21,7 @@ az group create -l $location -n $resourceGroupName -o table
 
 # Prepare extensions and providers
 az extension add --upgrade --yes --name aks-preview
+az extension add --upgrade --yes log-analytics
 
 # Enable feature
 az feature register --namespace "Microsoft.ContainerService" --name "PodSubnetPreview"
@@ -63,8 +64,8 @@ echo $myip
 #  --private-dns-zone None
 
 az aks create -g $resourceGroupName -n $aksName \
- --zones 1 2 3 --max-pods 50 --network-plugin azure \
- --node-count 3 --enable-cluster-autoscaler --min-count 3 --max-count 4 \
+ --max-pods 50 --network-plugin azure \
+ --node-count 3 --enable-cluster-autoscaler --min-count 2 --max-count 3 \
  --node-osdisk-type Ephemeral \
  --node-vm-size Standard_D8ds_v4 \
  --kubernetes-version 1.21.2 \
@@ -94,22 +95,15 @@ az aks get-credentials -n $aksName -g $resourceGroupName --overwrite-existing
 
 kubectl get nodes
 
-kubectl get nodes -o custom-columns=NAME:'{.metadata.name}',REGION:'{.metadata.labels.topology\.kubernetes\.io/region}',ZONE:'{metadata.labels.topology\.kubernetes\.io/zone}'
-# NAME                                REGION       ZONE
-# aks-nodepool1-30714164-vmss000000   westeurope   westeurope-1
-# aks-nodepool1-30714164-vmss000001   westeurope   westeurope-2
-# aks-nodepool1-30714164-vmss000002   westeurope   westeurope-3
+# Apply log and prometheus data collection settings 
+kubectl apply -f container-azm-ms-agentconfig.yaml
 
 # Create namespace
 kubectl apply -f namespace.yaml
 
-# Continue using "static provisioning" example
-# => static/setup-static.sh
-
-# Continue using "dynamic provisioning" example
-# => dynamic/setup-dynamic.sh
-
-kubectl apply -f demos
+# Create deployment & service
+kubectl apply -f deployment.yaml
+kubectl apply -f service.yaml
 
 kubectl get deployment -n demos
 kubectl describe deployment -n demos
@@ -125,90 +119,24 @@ kubectl get service -n demos
 ingressip=$(kubectl get service -n demos -o jsonpath="{.items[0].status.loadBalancer.ingress[0].ip}")
 echo $ingressip
 
-curl $ingressip/swagger/index.html
-# -> OK!
+curl $ingressip
+curl $ingressip/home/privacy
+curl $ingressip/notfound
+curl $ingressip/metrics
 
-cat <<EOF > payload.json
-{
-  "path": "/mnt/nfs",
-  "filter": "*.*",
-  "recursive": true
-}
-EOF
+# Query prometheus logs from our test app
+workspaceCustomerId=$(az monitor log-analytics workspace create --resource-group $resourceGroupName --workspace-name $workspaceName --query customerId -o tsv)
+echo $workspaceCustomerId
 
-# Quick tests
-# - Azure Files NFSv4.1
-curl --no-progress-meter -X POST --data '{"path": "/mnt/nfs","filter": "*.*","recursive": true}' -H "Content-Type: application/json" "http://$ingressip/api/files" | jq .milliseconds
-# - Azure Files SMB
-curl --no-progress-meter -X POST --data '{"path": "/mnt/smb","filter": "*.*","recursive": true}' -H "Content-Type: application/json" "http://$ingressip/api/files" | jq .milliseconds
-# - Azure NetApp Files NFSv4.1
-curl --no-progress-meter -X POST --data '{"path": "/mnt/netapp-nfs","filter": "*.*","recursive": true}' -H "Content-Type: application/json" "http://$ingressip/api/files" | jq .milliseconds
+az monitor log-analytics query \
+  --workspace $workspaceCustomerId \
+  --analytics-query "InsightsMetrics | where Namespace == 'prometheus' | summarize by Name" \
+  --out table
 
-# Test same in loop
-# - Azure Files NFSv4.1
-for i in {0..50}
-do 
-  curl --no-progress-meter -X POST --data '{"path": "/mnt/nfs","filter": "*.*","recursive": true}' -H "Content-Type: application/json" "http://$ingressip/api/files" | jq .milliseconds
-done
-# Examples: 1.8357, 2.918, 1.9534, 2.9706, 1.7649, 1.8872
-
-# - Azure Files SMB
-for i in {0..50}
-do 
-  curl --no-progress-meter -X POST --data '{"path": "/mnt/smb","filter": "*.*","recursive": true}' -H "Content-Type: application/json" "http://$ingressip/api/files" | jq .milliseconds
-done
-# Examples: 15.7838, 10.2626, 14.653, 11.2682, 9.8133, 15.9403, 11.6134
-
-# - Azure NetApp Files NFSv4.1
-for i in {0..50}
-do 
-  curl --no-progress-meter -X POST --data '{"path": "/mnt/netapp-nfs","filter": "*.*","recursive": true}' -H "Content-Type: application/json" "http://$ingressip/api/files" | jq .milliseconds
-done
-# Examples: 0.4258, 0.3901,0.407, 0.5709, 0.3992, 0.3968
-
-# Use upload and download APIs to test client to server latency and transfer performance
-# You can also use calculators e.g., https://www.calculator.net/bandwidth-calculator.html#download-time
-truncate -s 10m demo1.bin
-ls -lhF *.bin
-time curl -T demo1.bin -X POST "http://$ingressip/api/upload"
-time curl --no-progress-meter -X POST --data '{"size": 10485760}' -H "Content-Type: application/json" "http://$ingressip/api/download" -o demo2.bin
-rm *.bin
-
-# Connect to first pod
-pod1=$(kubectl get pod -n demos -o name | head -n 1)
-echo $pod1
-kubectl exec --stdin --tty $pod1 -n demos -- /bin/sh
-
-##############
-# fio examples
-##############
-mount
-fdisk -l
-
-# If not installed, then install
-apk add --no-cache fio
-
-fio
-
-cd /mnt/nfs
-cd /mnt/smb
-cd /mnt/netapp-nfs
-mkdir perf-test
-
-# Write test with 4 x 4MBs for 20 seconds
-fio --directory=perf-test --direct=1 --rw=randwrite --bs=4k --ioengine=libaio --iodepth=256 --runtime=20 --numjobs=4 --time_based --group_reporting --size=4m --name=iops-test-job --eta-newline=1
-
-# Read test with 4 x 4MBs for 20 seconds
-fio --directory=perf-test --direct=1 --rw=randread --bs=4k --ioengine=libaio --iodepth=256 --runtime=20 --numjobs=4 --time_based --group_reporting --size=4m --name=iops-test-job --eta-newline=1 --readonly
-
-# Find test files
-ls perf-test/*.0
-
-# Remove test files
-rm perf-test/*.0
-
-# Exit container shell
-exit
+az monitor log-analytics query \
+  --workspace $workspaceCustomerId \
+  --analytics-query "InsightsMetrics | where Namespace == 'prometheus' and parse_json(Tags).app == 'webapp-monitoring-demo' and Name == 'http_request_duration_seconds_bucket'" \
+  --out table
 
 # Wipe out the resources
 az group delete --name $resourceGroupName -y

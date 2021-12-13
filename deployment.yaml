@@ -12,6 +12,11 @@ spec:
     metadata:
       labels:
         app: webapp-monitoring-demo
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "80"
+        prometheus.io/scheme: "http"
     spec:
       nodeSelector:
         "beta.kubernetes.io/os": linux
