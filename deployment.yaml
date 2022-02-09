@@ -19,7 +19,7 @@ spec:
         prometheus.io/scheme: "http"
     spec:
       nodeSelector:
-        "beta.kubernetes.io/os": linux
+        kubernetes.io/os: linux
       containers:
       - image: jannemattila/webapp-monitoring:1.0.1
         imagePullPolicy: Always
